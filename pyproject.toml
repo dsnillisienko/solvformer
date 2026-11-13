@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "solvformer"
+version = "0.1.0"
+description = "Encoder-decoder Трансформер, обученный с нуля писать программы на Python по текстовым задачам"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Danil Lisienko" }]
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.5",
+    "tokenizers>=0.19",
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "pyarrow>=14",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+solvformer = "solvformer.solve:main"
+
+[tool.setuptools]
+packages = ["solvformer"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
