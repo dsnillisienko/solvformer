@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-REPO = 'dsnillisienko/hse-nlp'
+REPO = 'dsnillisienko/solvformer'
 
 
 def md(s):

@@ -89,7 +89,7 @@ top-p 0.95). Все они выполняются, одинаковые отве
 ## Быстрый старт
 
 ```
-git clone https://github.com/dsnillisienko/hse-nlp.git solvformer
+git clone https://github.com/dsnillisienko/solvformer.git
 cd solvformer
 pip install -e .
 ```
