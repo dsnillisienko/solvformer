@@ -9,20 +9,17 @@ Encoder-decoder Трансформер, обученный с нуля отве�
 12 программ-кандидатов, и всё это занимает 140 секунд на одной T4.
 
 ```
-$ python -m solvformer.solve --ckpt best.pt "A pack has 12 pencils. Tom buys 3 packs and gives away 7 pencils. How many pencils does he have left?"
+$ python -m solvformer.solve --ckpt weights/avg.pt "A pack has 12 pencils. Tom buys 3 packs and gives away 7 pencils. How many pencils does he have left?"
 def solve() -> int:
-    pencils_per_pack = 12
-    packs_bought = 3
-    pencils_given_away = 7
-    total_pencils = pencils_per_pack * packs_bought
-    pencils_left = total_pencils - pencils_given_away
+    total_pencils = 12 * 3
+    pencils_left = total_pencils - 7
     result = pencils_left
     return result
 
 ответ: 29  (так ответили 12 из 12 кандидатов)
 ```
 
-Это настоящий вывод базовой модели 6+6.
+Это настоящий вывод итоговой модели.
 
 ## Результаты
 
@@ -97,13 +94,15 @@ cd solvformer
 pip install -e .
 ```
 
-В репозитории лежат токенизатор и валидация. Итоговые веса это файл `runs/continue_9x9/avg.pt`
-в output Kaggle-ноутбука `lisich257/continue`.
+В репозитории лежат токенизатор и валидация. Итоговые веса выложены на Hugging Face:
+[DanilLis/solvformer](https://huggingface.co/DanilLis/solvformer), файл `avg.pt` (298 МБ).
 
 ```
-python -m solvformer.solve --ckpt avg.pt 'Cindy paid $54 for a sweater after a 10% sales tax. What was the price before the tax?'
-python -m solvformer.generate --ckpt avg.pt --split val --out val_pred.jsonl    # жадный pass@1 на валидации
-python -m solvformer.vote --ckpt avg.pt --k 12                                  # голосование при K = 1, 2, 4, 8
+hf download DanilLis/solvformer avg.pt --local-dir weights
+
+python -m solvformer.solve --ckpt weights/avg.pt 'Cindy paid $54 for a sweater after a 10% sales tax. What was the price before the tax?'
+python -m solvformer.generate --ckpt weights/avg.pt --split val --out val_pred.jsonl    # жадный pass@1 на валидации
+python -m solvformer.vote --ckpt weights/avg.pt --k 12                                  # голосование при K = 1, 2, 4, 8
 ```
 
 Модель 6+6 жадно отвечает на 2000 вопросов валидации за 20 с на ноутбуке с M3.
