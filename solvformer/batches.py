@@ -1,8 +1,12 @@
 import numpy as np
 import torch
-from src.tokenizer import PAD, BOS
+
+from solvformer import BOS, PAD
+
 
 class Data:
+    """Закодированные шарды, склеенные в общие массивы токенов со смещениями; отдаёт батчи из примеров похожей длины."""
+
     def __init__(self, paths):
         qs, qo, cs, co = [], [], [], []
         q_base, c_base = 0, 0

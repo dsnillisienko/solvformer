@@ -1,24 +1,29 @@
-"""Подготовка данных на новой машине (Kaggle): скачать шарды и закодировать их.
+"""Подготовка данных на новой машине: скачать шарды и закодировать их.
 
 Токенизатор и валидация не пересобираются, а берутся из репозитория (data/tokenizer.json, data/val.jsonl),
-чтобы на Kaggle были ровно те же токены и та же валидация, что локально.
+чтобы на любой машине были ровно те же токены и та же валидация.
 
-    python src/prepare.py download --data data --shards 0-59
-    python src/prepare.py encode   --data data --out data/enc
+    python -m solvformer.prepare download --data data --shards 0-59
+    python -m solvformer.prepare encode   --data data --out data/enc
 """
 import argparse
 import json
-import sys
 import threading
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.train import parse_shards
-
 HF = 'https://huggingface.co/datasets/SlavaYus/tinysms_qa_12m/resolve/main/data'
+
+
+def parse_shards(spec):
+    """'0-3,13' -> [0, 1, 2, 3, 13]"""
+    out = []
+    for part in spec.split(','):
+        lo, _, hi = part.partition('-')
+        out += list(range(int(lo), int(hi or lo) + 1))
+    return out
 
 
 def download(data, shards, workers=8):
@@ -73,7 +78,7 @@ def download(data, shards, workers=8):
 def encode_all(data, out, shards):
     import pandas as pd
     from tokenizers import Tokenizer
-    from src.data import encode_shard
+    from solvformer.data import encode_shard
 
     tok = Tokenizer.from_file(str(data / 'tokenizer.json'))
     exclude = {json.loads(line)['question'] for line in open(data / 'val.jsonl')}
@@ -100,7 +105,7 @@ def encode_all(data, out, shards):
                 f.write(json.dumps({k: str(v) if isinstance(v, Path) else v for k, v in s.items()}) + '\n')
 
 
-if __name__ == '__main__':
+def main():
     p = argparse.ArgumentParser()
     p.add_argument('cmd', choices=['download', 'encode'])
     p.add_argument('--data', type=Path, default=Path('data'))
@@ -112,3 +117,7 @@ if __name__ == '__main__':
         download(a.data, shards)
     else:
         encode_all(a.data, a.out or a.data / 'enc', shards)
+
+
+if __name__ == '__main__':
+    main()

@@ -3,9 +3,9 @@ import json
 import numpy as np
 import pandas as pd
 
-from src.execute import run_many
-from src.normalize import normalize
-from src.tokenizer import EOS
+from solvformer import EOS
+from solvformer.execute import run_many
+from solvformer.normalize import normalize
 
 
 def build_val(shard_path, out_path, n=2000, seed=0):

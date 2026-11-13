@@ -1,12 +1,14 @@
 import numpy as np
 from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers
 
-SPECIALS = ['<pad>', '<bos>', '<eos>']
-PAD, BOS, EOS = 0, 1, 2
+from solvformer import BOS, EOS, PAD, SPECIALS
 
 
 def build_tokenizer(kind):
-    """Пустой BPE-токенизатор; kind задаёт, как текст режется до BPE."""
+    """Пустой BPE-токенизатор; kind задаёт, как текст режется до BPE.
+
+    gpt2: regex GPT-2; noregex: без предразбиения; numbers: каждое число сначала вырезается целиком,
+    так что в вопросе и в коде оно токенизируется одинаково; digits: то же, но по одной цифре."""
     tok = Tokenizer(models.BPE())
     if kind == 'gpt2':
         tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)

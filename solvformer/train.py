@@ -1,17 +1,16 @@
-"""Обучение MishaGustokashin.
+"""Обучение Solvformer.
 
-    # отладка на маке
-    python src/train.py --out runs/debug --shards 0-1 --steps 300 --d 128 --heads 4 --n_enc 2 --n_dec 2 --batch 64 --eval_every 100 --eval_n 100
-    # Kaggle T4
-    python src/train.py --out runs/base --shards 0-59 --steps 45000 --batch 256 --max_minutes 600
-    # Kaggle T4 x2: каждая GPU берёт свой батч, эффективный батч = 2 × --batch
-    torchrun --nproc_per_node 2 src/train.py --out runs/base --shards 0-59 --steps 48000 --batch 256
+    # отладка на ноутбуке
+    python -m solvformer.train --out runs/debug --shards 0-1 --steps 300 --d_model 128 --heads 4 --n_enc 2 --n_dec 2 --batch 64 --eval_every 100 --eval_n 100
+    # одна GPU
+    python -m solvformer.train --out runs/base --shards 0-59 --steps 45000 --batch 256 --max_minutes 600
+    # две GPU: каждая берёт свой батч, эффективный батч = 2 × --batch
+    torchrun --nproc_per_node 2 -m solvformer.train --out runs/base --shards 0-59 --steps 48000 --batch 256
 """
 import argparse
 import json
 import math
 import os
-import sys
 import time
 from pathlib import Path
 
@@ -23,20 +22,12 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.batches import Data
-from src.execute import pass1
-from src.generate import generate_codes, pick_device, save_checkpoint
-from src.model import Config, MishaGustokashin
-
-
-def parse_shards(spec):
-    """'0-3,13' -> [0, 1, 2, 3, 13]"""
-    out = []
-    for part in spec.split(','):
-        lo, _, hi = part.partition('-')
-        out += list(range(int(lo), int(hi or lo) + 1))
-    return out
+from solvformer.batches import Data
+from solvformer.checkpoint import pick_device, read_checkpoint, save_checkpoint
+from solvformer.execute import pass1
+from solvformer.generate import generate_codes
+from solvformer.model import Config, Solvformer
+from solvformer.prepare import parse_shards
 
 
 def progress(step, elapsed, a):
@@ -164,11 +155,11 @@ def main():
     say(f'train: {data.n:,} примеров, токенов q {data.q_len.sum():,} / c {data.c_len.sum():,}', flush=True)
 
     cfg = Config(vocab=tok.get_vocab_size(), d=a.d, heads=a.heads, n_enc=a.n_enc, n_dec=a.n_dec, ffn=a.ffn)
-    init = torch.load(a.init_from, map_location='cpu', weights_only=False) if a.init_from else None
+    init = read_checkpoint(a.init_from) if a.init_from else None
     if init:
         cfg = Config(**init['cfg'])
         a.ffn = cfg.ffn
-    model = MishaGustokashin(cfg)
+    model = Solvformer(cfg)
     if init:
         model.load_state_dict(init['model'])
         say(f'веса из {a.init_from} (шаг {init.get("step")}), оптимизатор и LR с нуля', flush=True)
@@ -184,7 +175,7 @@ def main():
 
     start, best = 0, -1.0
     if a.resume:
-        ck = torch.load(a.resume, map_location='cpu', weights_only=False)
+        ck = read_checkpoint(a.resume)
         model.load_state_dict(ck['model'])
         opt.load_state_dict(ck['opt'])
         scaler.load_state_dict(ck['scaler'])

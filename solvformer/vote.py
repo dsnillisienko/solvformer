@@ -1,111 +1,24 @@
 """Голосование по результату исполнения (self-consistency).
 
 На каждый вопрос генерируется K программ (первая жадная, остальные сэмплированы с температурой),
-все выполняются, ответы группируются с допуском бота, побеждает самая большая группа; в сабмит идёт
+все выполняются, ответы группируются с допуском сравнения, побеждает самая большая группа; в ответ идёт
 программа из неё, которой модель даёт наибольшую вероятность. Если ни одна программа не вернула число,
 берётся жадная. Голосование работает только на инференсе, обучение оно не затрагивает.
 
-    python src/vote.py --ckpt runs/base_d512_6x6/best.pt --split val --k 16 --temperature 0.7 --limit 500
+    python -m solvformer.vote --ckpt runs/base_d512_6x6/best.pt --k 16 --temperature 0.7 --limit 500
 """
 import argparse
 import json
-import subprocess
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import torch
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.execute import is_correct
-from src.model import EOS, PAD
-from src.normalize import denormalize
-
-RUNNER_MANY = r"""
-import io, json, math, signal, sys
-codes = json.loads(sys.stdin.read())
-timeout = float(sys.argv[1])
-real_stdout = sys.stdout
-
-class Timeout(BaseException):
-    pass
-
-def on_alarm(*_):
-    raise Timeout()
-
-signal.signal(signal.SIGALRM, on_alarm)
-out = []
-for code in codes:
-    sys.stdout = io.StringIO()
-    try:
-        signal.setitimer(signal.ITIMER_REAL, timeout)
-        ns = {}
-        exec(code, ns)
-        r = float(ns['solve']())
-        if math.isnan(r) or math.isinf(r):
-            r = None
-    except BaseException:
-        r = None
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-    out.append(r)
-sys.stdout = real_stdout
-print(json.dumps(out))
-"""
-
-
-def run_group(codes, timeout=1.0):
-    """Список программ -> список ответов (float | None), всё в одном процессе."""
-    try:
-        p = subprocess.run([sys.executable, '-I', '-c', RUNNER_MANY, str(timeout)], input=json.dumps(codes),
-                           capture_output=True, text=True, timeout=timeout * len(codes) + 5)
-        res = json.loads(p.stdout.strip().splitlines()[-1])
-        return res if len(res) == len(codes) else [None] * len(codes)
-    except Exception:
-        return [None] * len(codes)
-
-
-def run_groups(groups, timeout=1.0, workers=8):
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        return list(ex.map(lambda g: run_group(g, timeout), groups))
-
-
-@torch.no_grad()
-def generate_scored(model, tok, questions, device, batch_size=512, max_new=128,
-                    temperature=0.0, top_p=1.0, seed=0, on_batch=None):
-    """Как generate_codes, но с параметрами сэмплирования; возвращает [(code, logprob)] в порядке вопросов.
-
-    on_batch(список (индекс вопроса, (code, logprob))) вызывается после каждого батча, чтобы CPU исполнял
-    готовые программы, пока GPU генерирует следующий батч.
-    """
-    model.eval()
-    gen = torch.Generator(device=device).manual_seed(seed) if temperature > 0 else None
-    ids = [e.ids[:model.cfg.max_src] for e in tok.encode_batch(questions)]
-    order = sorted(range(len(ids)), key=lambda i: len(ids[i]))
-    res = [None] * len(ids)
-    amp = torch.autocast('cuda', dtype=torch.float16) if device.type == 'cuda' else torch.autocast('cpu', enabled=False)
-    for s in range(0, len(order), batch_size):
-        batch = order[s:s + batch_size]
-        L = max(1, max(len(ids[i]) for i in batch))
-        src = torch.full((len(batch), L), PAD, dtype=torch.long)
-        for r, i in enumerate(batch):
-            src[r, :len(ids[i])] = torch.tensor(ids[i])
-        with amp:
-            out, lp = model.generate(src.to(device), max_new=max_new, temperature=temperature, top_p=top_p,
-                                     return_logprob=True, generator=gen)
-        out, lp = out.tolist(), lp.tolist()
-        for r, i in enumerate(batch):
-            row = out[r]
-            row = row[:row.index(EOS)] if EOS in row else row
-            res[i] = (denormalize(tok.decode(row)), lp[r])
-        if on_batch:
-            on_batch([(i, res[i]) for i in batch])
-    return res
+from solvformer.execute import is_correct, run_group, run_groups
+from solvformer.generate import generate_scored
 
 
 def candidates(model, tok, questions, device, k, temperature=0.7, top_p=0.95, batch_size=512, max_new=128, seed=0):
-    """K кандидатов на вопрос: [жадный] + (K-1) сэмплов. Возвращает список списков (code, logprob)."""
+    """K кандидатов на вопрос: [жадный] + (K-1) сэмплов. Возвращает список списков (программа, logprob)."""
     greedy = generate_scored(model, tok, questions, device, batch_size, max_new)
     cands = [[g] for g in greedy]
     if k > 1:
@@ -161,7 +74,9 @@ def ensemble_candidates_and_values(models, ks, tok, questions, device, **kw):
 
 
 def vote(cands, values):
-    """cands: [(code, logprob)], values: [float | None] -> (выбранная программа, её ответ | None)."""
+    """cands: [(программа, logprob)], values: [float | None] -> (выбранная программа, её ответ | None).
+
+    Побеждает самая большая группа одинаковых ответов, при равенстве та, у которой больше сумма logprob."""
     groups = []
     for (code, lp), v in zip(cands, values):
         if v is None:
@@ -183,12 +98,11 @@ def vote(cands, values):
 
 def main():
     from tokenizers import Tokenizer
-    from src.generate import load_model, pick_device
+    from solvformer.checkpoint import load_model, pick_device
 
     p = argparse.ArgumentParser()
     p.add_argument('--ckpt', required=True)
     p.add_argument('--data', type=Path, default=Path('data'))
-    p.add_argument('--split', choices=['val'], default='val')
     p.add_argument('--limit', type=int, default=0)
     p.add_argument('--k', type=int, default=16)
     p.add_argument('--temperature', type=float, default=0.7)

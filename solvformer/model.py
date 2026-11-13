@@ -1,7 +1,11 @@
 from dataclasses import dataclass
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from solvformer import BOS, EOS, PAD
+
 
 @dataclass
 class Config:
@@ -15,7 +19,10 @@ class Config:
     max_tgt: int = 160
     ffn: str = 'gelu'
 
+
 class Attention(nn.Module):
+    """Один модуль на self- и cross-attention: Q считается из x, K и V из mem (cross) или из x (self)."""
+
     def __init__(self, cfg):
         super().__init__()
         self.h = cfg.heads
@@ -41,6 +48,7 @@ class Attention(nn.Module):
         k, v = self.heads_kv(x if mem is None else mem)
         y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, is_causal=causal)
         return self.merge(y)
+
 
 class FFN(nn.Module):
     def __init__(self, cfg):
@@ -106,9 +114,6 @@ class DecoderLayer(nn.Module):
         return x + self.ffn(self.n3(x))
 
 
-PAD, BOS, EOS = 0, 1, 2
-
-
 def sample(logits, top_p=1.0, generator=None):
     """Один токен на строку из softmax(logits); top-p оставляет минимальный набор токенов с суммой вероятностей ≥ p."""
     probs = torch.softmax(logits, -1)
@@ -119,7 +124,10 @@ def sample(logits, top_p=1.0, generator=None):
         probs = torch.zeros_like(probs).scatter_(-1, si, sp)
     return torch.multinomial(probs, 1, generator=generator)[:, 0]
 
-class MishaGustokashin(nn.Module):
+
+class Solvformer(nn.Module):
+    """Pre-LN encoder-decoder Трансформер с общей таблицей эмбеддингов для вопроса, кода и выходного слоя."""
+
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
