@@ -1,30 +1,19 @@
-"""Собирает kaggle/inference.ipynb: код из src/ встраивается в ноутбук через %%writefile.
+"""Собирает kaggle/inference.ipynb: код пакета встраивается в ноутбук через %%writefile.
 
-Сдаваемый ноутбук не зависит от приватного репозитория: код встроен в сам ноутбук, а веса, токенизатор,
-валидация и тест подключаются как входы Kaggle. Пересобирать после любых правок в src/:
+Ноутбук самодостаточен: репозиторий ему клонировать не нужно, а веса, токенизатор и вопросы подключаются
+как входы Kaggle. Пересобирать после любых правок в solvformer/:
 
     python kaggle/build_inference.py
 """
-import json
-from pathlib import Path
+from common import ROOT, code, md, write
 
-ROOT = Path(__file__).resolve().parent.parent
-SRC = ['model.py', 'normalize.py', 'execute.py', 'generate.py', 'vote.py']
-
-
-def md(s):
-    return {'cell_type': 'markdown', 'metadata': {}, 'source': s.strip('\n')}
-
-
-def code(s):
-    return {'cell_type': 'code', 'metadata': {}, 'execution_count': None, 'outputs': [], 'source': s.strip('\n')}
-
+SRC = ['__init__.py', 'model.py', 'normalize.py', 'execute.py', 'checkpoint.py', 'generate.py', 'vote.py']
 
 cells = [
     md('''
-# HW2: ответы на тест за 180 с на одной T4
+# Solvformer: 1919 вопросов теста быстрее 180 с на одной T4
 
-Модель: encoder-decoder Трансформер `MishaGustokashin`, обученный с нуля на `SlavaYus/tinysms_qa_12m`.
+Модель: encoder-decoder Трансформер `Solvformer`, обученный с нуля на `SlavaYus/tinysms_qa_12m`.
 Итоговые веса `continue_9x9/avg.pt`: 9+9 слоёв, d = 512, 74.5M параметров, 9 ч обучения с нуля и 7.5 ч дообучения
 на 2×T4, среднее 4 последних чекпойнтов. На каждый вопрос генерируется 12 программ, ответ выбирается голосованием.
 На 2000 вопросах валидации жадная генерация даёт 0.7185, голосование 0.7570. Тест на T4 занимает около 140 с.
@@ -39,19 +28,20 @@ Settings: Accelerator GPU T4. Входы (Add Input): датасет `hw2-avg` (
 
 Голосование по исполнению. Из `VOTE_K` программ на вопрос одна жадная, остальные сэмплированы с температурой
 `TEMPERATURE` и top-p `TOP_P`. Все кандидаты вопроса выполняются в одном процессе с таймаутом на программу,
-пока GPU генерирует следующие батчи. Ответы группируются с тем же допуском, что у бота; в сабмит идёт программа
+пока GPU генерирует следующие батчи. Ответы группируются с допуском сравнения; в файл идёт программа
 из самой большой группы, которой модель даёт наибольшую вероятность. Если ни одна программа не вернула число,
 берётся жадная. Время голосования входит в замер. При `VOTE_K = 1` генерация обычная жадная.
 
 Модели задаются строкой `MODELS` вида `'файл:K,файл:K'`: файл ищется по имени или хвосту пути во всех входах,
-K это число кандидатов от этой модели. Если в `MODELS` несколько моделей, получается ансамбль: каждая модель даёт свою часть кандидатов, и голосуют
-они вместе. В итоговой версии модель одна, ансамбль с другими весами на валидации оказался хуже.
+K это число кандидатов от этой модели. Если в `MODELS` несколько моделей, получается ансамбль: каждая модель
+даёт свою часть кандидатов, и голосуют они вместе. В итоговой версии модель одна, ансамбль с другими весами
+на валидации оказался хуже.
 '''),
-    md('## Код модели и генерации (встроен из `src/`)'),
-    code("import os\nos.makedirs('src', exist_ok=True)"),
+    md('## Код модели и генерации (встроен из `solvformer/`)'),
+    code("import os\nos.makedirs('solvformer', exist_ok=True)"),
 ]
 for name in SRC:
-    cells.append(code(f'%%writefile src/{name}\n' + (ROOT / 'src' / name).read_text()))
+    cells.append(code(f'%%writefile solvformer/{name}\n' + (ROOT / 'solvformer' / name).read_text()))
 
 cells += [
     md('## Входные данные'),
@@ -60,12 +50,13 @@ import glob, json, os, sys, time, urllib.request
 import pandas as pd, torch
 from tokenizers import Tokenizer
 sys.path.insert(0, '.')
-from src.generate import load_model, generate_codes
-from src.vote import ensemble_candidates_and_values, vote
-from src.execute import is_correct, pass1
+from solvformer.checkpoint import load_model
+from solvformer.generate import generate_codes
+from solvformer.vote import ensemble_candidates_and_values, vote
+from solvformer.execute import is_correct, pass1
 
-INPUT = os.environ.get('HW2_INPUT', '/kaggle/input')
-MODELS = [(name, int(k)) for name, k in (x.split(':') for x in os.environ.get('HW2_MODELS', 'continue_9x9/avg.pt:12').split(','))]
+INPUT = os.environ.get('SOLVFORMER_INPUT', '/kaggle/input')
+MODELS = [(name, int(k)) for name, k in (x.split(':') for x in os.environ.get('SOLVFORMER_MODELS', 'continue_9x9/avg.pt:12').split(','))]
 VOTE_K = sum(k for _, k in MODELS)
 
 
@@ -128,10 +119,10 @@ parts = ' · '.join(f'{k} {v:.1f} с' for k, v in {'загрузка': t_load, *
 print(f'{len(codes)} programs in {elapsed:.1f} s  (лимит 180 с; MODELS={MODELS}: {parts})')
 print(codes[0])
 '''),
-    md('## Проверка сабмита (не входит в замер)'),
+    md('## Проверка файла с ответами (не входит в замер)'),
     code('''
 import ast
-from src.execute import run_many
+from solvformer.execute import run_many
 
 def parses(src):
     try:
@@ -141,7 +132,7 @@ def parses(src):
         return False
 
 rows = [json.loads(line) for line in open('submission.jsonl')]
-assert len(rows) == len(questions) == 1919, len(rows)
+assert len(rows) == len(questions), len(rows)
 ok_syntax = sum(parses(r['code']) for r in rows)
 values = run_many([r['code'] for r in rows])
 numeric = sum(v is not None for v in values)
@@ -167,7 +158,7 @@ else:
 
 cells += [
     md('''
-## Сравнение вариантов на валидации (не входит в сабмит)
+## Сравнение вариантов на валидации (в файл с ответами не входит)
 Строки `COMPARE` записываются так же, как `MODELS`: `'файл:K,файл:K'`. Если файлов с одним именем несколько,
 вместо имени пишется хвост пути (`final2/avg.pt`). Время на 2000 вопросах валидации примерно равно времени
 на 1919 вопросах теста. Модели с 12 слоями декодера не помещаются в память T4 с батчем 2048, поэтому при нехватке
@@ -205,13 +196,4 @@ if COMPARE and VAL:
 """),
 ]
 
-for i, c in enumerate(cells):
-    c['id'] = f'cell-{i:02d}'
-
-nb = {'cells': cells,
-      'metadata': {'kernelspec': {'display_name': 'Python 3', 'language': 'python', 'name': 'python3'},
-                   'language_info': {'name': 'python'}},
-      'nbformat': 4, 'nbformat_minor': 5}
-out = ROOT / 'kaggle' / 'inference.ipynb'
-out.write_text(json.dumps(nb, ensure_ascii=False, indent=1))
-print('written', out, len(cells), 'cells')
+write('inference.ipynb', cells)
